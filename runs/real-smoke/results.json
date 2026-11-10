@@ -1,0 +1,10 @@
+{
+  "model": "torchaudio/CONVTASNET_BASE_LIBRI2MIX",
+  "sample_rate_hz": 8000,
+  "mixture_channels": 1,
+  "speaker_count": 2,
+  "source_durations_s": [7.06, 5.3],
+  "offset_s": [0, 1.2],
+  "duration_s": 7.06,
+  "scores": {"mean_sisdr": 13.80901929495235, "mean_baseline_sisdr": 0.0004016484784956642, "mean_sisdri": 13.808617646473856, "min_sisdri": 13.212817001234079}
+}
