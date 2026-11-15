@@ -3,7 +3,6 @@ from argparse import ArgumentParser
 from math import gcd
 import json
 from pathlib import Path
-from time import perf_counter
 import numpy as np
 from scipy.io import wavfile
 from scipy.signal import resample_poly
@@ -15,10 +14,14 @@ def read_mono(path):
     rate, x = wavfile.read(path)
     if x.ndim != 1 or not x.size:
         raise ValueError("Input must be a nonempty mono WAV")
-    if np.issubdtype(x.dtype, np.signedinteger):
+    if x.dtype == np.uint8:
+        x = (x.astype(np.float64) - 128) / 128
+    elif np.issubdtype(x.dtype, np.signedinteger):
         x = x.astype(np.float64) / -float(np.iinfo(x.dtype).min)
     else:
         x = x.astype(np.float64)
+    if not np.isfinite(x).all():
+        raise ValueError(f"Non-finite audio samples: {path}")
     if rate != SAMPLE_RATE:
         factor = gcd(rate, SAMPLE_RATE)
         x = resample_poly(x, SAMPLE_RATE // factor, rate // factor)
@@ -26,6 +29,30 @@ def read_mono(path):
     if np.max(np.abs(x)) < 1e-6:
         raise ValueError("Input is silent")
     return x
+
+
+def load_separator(weights=None):
+    import torch
+    import torchaudio
+
+    if weights is None:
+        return torchaudio.pipelines.CONVTASNET_BASE_LIBRI2MIX.get_model().eval()
+    model = torchaudio.models.conv_tasnet_base(num_sources=2)
+    model.load_state_dict(torch.load(weights, map_location="cpu", weights_only=True))
+    return model.eval()
+
+
+def separate_pcm(model, mix_pcm):
+    import torch
+
+    mixture = torch.from_numpy(mix_pcm.astype(np.float32) / 32768)[None, None]
+    with torch.inference_mode():
+        estimates = model(mixture)[0].numpy()
+    if estimates.shape != (2, mix_pcm.size) or not np.isfinite(estimates).all():
+        raise RuntimeError("Separator must return two finite tracks matching the input length")
+    peak = float(np.max(np.abs(estimates)))
+    gain = min(1.0, 0.9 / peak) if peak > 0 else 1.0
+    return np.rint(estimates * (gain * 32768)).astype(np.int16)
 
 def mix(first, second, offset_s):
     offset = round(offset_s * SAMPLE_RATE)
@@ -47,12 +74,7 @@ def main():
     args = p.parse_args()
     if args.output.exists(): raise FileExistsError("Choose a new output directory")
     mix_pcm, refs_pcm, offset = mix(*(read_mono(x) for x in args.sources), args.offset)
-    import torch, torchaudio
-    model = torchaudio.pipelines.CONVTASNET_BASE_LIBRI2MIX.get_model().eval()
-    with torch.inference_mode():
-        estimates = model(torch.from_numpy(mix_pcm.astype(np.float32) / 32768)[None, None])[0].numpy()
-    gain = min(1.0, .9 / np.max(np.abs(estimates)))
-    estimates_pcm = np.rint(estimates * gain * 32768).astype(np.int16)
+    estimates_pcm = separate_pcm(load_separator(), mix_pcm)
     result = {"model":"torchaudio/CONVTASNET_BASE_LIBRI2MIX", "sample_rate_hz":SAMPLE_RATE, "mixture_channels":1, "speaker_count":2, "offset_s":[0, offset/SAMPLE_RATE], "scores":evaluate(mix_pcm/32768, refs_pcm/32768, estimates_pcm/32768)}
     args.output.mkdir(parents=True)
     wavfile.write(args.output / "mixture.wav", SAMPLE_RATE, mix_pcm)

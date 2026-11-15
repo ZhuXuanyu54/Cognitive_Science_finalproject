@@ -1,4 +1,48 @@
-# 单声道双人语音分离初步实验
+# 鸡尾酒会场景下的单通道重叠语音分离与选择性回放
+
+咖啡馆里，同桌和隔壁桌的声音被同一部手机录进一条音轨。本项目把这条混音分为两路，供听者选择想听的人声，并调低另一路。
+
+## 咖啡馆对照实验
+
+`run_cafe.py sweep` 每组接收两段不同说话人的单声道 WAV（每段至少 2 秒）。第一个文件代表同桌，第二个代表隔壁桌。每组用同一对原声生成五份混音。
+
+| 条件 | 隔壁桌相对于同桌的电平 | 两段音频的重叠窗口 |
+| --- | --- | --- |
+| 电平对照 | −6、0、+6 dB | 较短原声时长的 50% |
+| 重叠对照 | 0 dB | 较短原声时长的 25%、50%、90% |
+
+两类对照共用 0 dB / 50% 这档。电平按各自完整原声的 RMS 设定，评分区间内实际测得的电平差也会单独记录。重叠百分比描述两段录音时间窗的交集，包含发言中的停顿。每个条件都用同一模型推理，在重叠区匹配两路输出与原声并计算 SI-SDR 和 SI-SDRi。比较不同干扰电平时请同时看两项指标，因为混音基线也会随电平变化。
+
+先按下方步骤安装依赖。随后在项目目录运行，示例路径对应[中文、英文咖啡馆样本](samples/cafe/来源.md)，也可替换成自己的 WAV。
+
+~~~bash
+python run_cafe.py sweep \
+  --pair 中文 samples/cafe/chinese/source_1.wav samples/cafe/chinese/source_2.wav \
+  --pair 英文 samples/cafe/english/source_1.wav samples/cafe/english/source_2.wav \
+  --output runs/cafe-demo
+python -m http.server 8080 --bind 127.0.0.1
+~~~
+
+打开 [本地试听页](http://127.0.0.1:8080/cafe_demo/)。可以跳到标出的重叠区，在同一播放位置切换混音与分离结果，选择想听的音轨，并调节另一路的音量。每个实验条件生成原始混音、两条分离轨、两条参考轨。`scores.csv` 汇总重叠区分数，`manifest.json` 保存参数、配对和文件路径。要复跑，给 `--output` 指定一个新目录，并在试听页 URL 加上 `?manifest=../runs/新目录/manifest.json`。
+
+本地用中文和英文各一组合成对话完成了 10 份混音的试跑。保持重叠窗口为 50%，隔壁桌的设定电平从 −6 dB 提高到 +6 dB 时，目标语音的 SI-SDR 如下。
+
+| 样本 | 干扰低 6 dB | 等电平 | 干扰高 6 dB |
+| --- | ---: | ---: | ---: |
+| 中文 | 20.46 dB | 16.66 dB | 13.55 dB |
+| 英文 | 20.88 dB | 17.75 dB | 14.47 dB |
+
+这两组数据用于验证流程和展示对照，样本量不足以比较不同语言或估计真实咖啡馆的效果。
+
+可以用同一界面试听只有一路混音的手机录音。模型会输出两条轨道供手动选择。客观评分需要对齐的干净原声，手机录音用来试听。
+
+~~~bash
+python run_cafe.py recording phone-mono.wav --output runs/cafe-phone
+~~~
+
+打开 [手机录音试听页](http://127.0.0.1:8080/cafe_demo/?manifest=../runs/cafe-phone/manifest.json)。两个子命令都可用 `--weights` 指定已经下载的官方权重。这一版用的是固定两路输出的模型，适合两位说话人的短录音。
+
+## 原始双人试跑
 
 本实验验证：一条由两位说话人叠加而成的单声道混音，能否由预训练语音分离网络拆成两条语音。模型只接收混音；干净原声仅用于合成混音与计算分数。
 
@@ -13,7 +57,7 @@
 | 合成英文双人语音 | 0.02 dB | 18.43 dB | +18.41 dB |
 | LibriSpeech 真人英文双人语音 | 0.00 dB | 13.81 dB | +13.81 dB |
 
-真人组两路 SI-SDRi 分别为 13.21 dB 和 14.40 dB。完整参数和每路分数保存在 `runs/*/results.json`。
+真人组两路 SI-SDRi 分别为 13.21 dB 和 14.40 dB。两组试跑的汇总数据保存在 `runs/*/results.json`。
 
 ## 复现
 
@@ -32,6 +76,4 @@ python run_pilot.py path/to/source_1.wav path/to/source_2.wav --output runs/repr
 
 ## 音频来源
 
-合成英文组由 macOS 内置的 Samantha 与 Daniel 语音生成。真人英文组来自 [LibriSpeech（OpenSLR 12）](https://www.openslr.org/12/)，许可为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。为避免把语料副本提交到仓库，音频二进制文件未纳入版本控制；`samples/README.md` 记录了可复现的来源与处理方式。
-
-这是双人流程试跑。后续实验可固定原声对并改变重叠程度，再以三路输出模型测试三人混音。
+合成英文组由 macOS 内置的 Samantha 与 Daniel 语音生成。真人英文组来自 [LibriSpeech（OpenSLR 12）](https://www.openslr.org/12/)，许可为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。音频来源与处理方式见 [原始样本说明](samples/README.md)。

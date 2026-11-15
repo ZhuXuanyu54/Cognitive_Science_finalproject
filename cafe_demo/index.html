@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f6">
+  <title>咖啡厅语音分离试听</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="demo.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="intro">
+      <h1>咖啡厅语音分离试听</h1>
+      <p>在同一播放位置切换原始混音和分离结果，听听另一位说话人的声音还剩多少。</p>
+    </header>
+
+    <section class="case-bar" aria-label="试听场景">
+      <div class="case-picker">
+        <label for="case-select">实验样本</label>
+        <select id="case-select" disabled>
+          <option>读取实验清单…</option>
+        </select>
+      </div>
+      <dl class="case-details" id="case-details" hidden></dl>
+    </section>
+
+    <section class="editor" aria-label="音频轨道">
+      <div class="transport">
+        <div class="transport-buttons">
+          <button class="primary" type="button" id="play" disabled>播放</button>
+          <button type="button" id="stop" disabled>停止</button>
+        </div>
+        <fieldset class="mode-group" id="modes" disabled>
+          <legend>试听来源</legend>
+          <div class="segmented">
+            <label><input type="radio" name="mode" value="mix" checked><span>原始混音</span></label>
+            <label><input type="radio" name="mode" value="separated"><span>分离结果</span></label>
+          </div>
+        </fieldset>
+        <div class="transport-time" aria-hidden="true">
+          <span id="elapsed">0:00.0</span>
+          <span class="time-divider">/</span>
+          <span id="duration">0:00.0</span>
+        </div>
+      </div>
+
+      <div class="track-area" id="track-area">
+        <div class="ruler" aria-hidden="true">
+          <div class="ticks" id="ticks"><span>0:00</span></div>
+        </div>
+        <div class="lane" id="mix-lane" data-active="true">
+          <div class="lane-label">
+            <span class="lane-name">原始混音</span>
+            <span class="lane-status" id="mix-status" aria-hidden="true">当前试听</span>
+          </div>
+          <canvas class="waveform" aria-hidden="true"></canvas>
+        </div>
+        <div class="lane" id="track-1-lane">
+          <button class="track-button" data-track="0" aria-pressed="true" type="button" disabled>
+            <span class="lane-name">分离轨 1</span>
+            <span class="lane-status" id="track-1-status" aria-hidden="true">已选</span>
+          </button>
+          <canvas class="waveform" aria-hidden="true"></canvas>
+        </div>
+        <div class="lane" id="track-2-lane">
+          <button class="track-button" data-track="1" aria-pressed="false" type="button" disabled>
+            <span class="lane-name">分离轨 2</span>
+            <span class="lane-status" id="track-2-status" aria-hidden="true">可设为主轨</span>
+          </button>
+          <canvas class="waveform" aria-hidden="true"></canvas>
+        </div>
+        <div class="cursor-area" aria-hidden="true"><div class="cursor"></div></div>
+      </div>
+
+      <div class="seek-row">
+        <label for="seek">播放位置</label>
+        <div class="seek-controls">
+          <input type="range" id="seek" min="0" max="1" step="0.01" value="0"
+            aria-valuetext="0 秒，共 0 秒" disabled>
+          <button id="jump-overlap" type="button" hidden>跳到重叠段</button>
+        </div>
+      </div>
+
+      <div class="monitor">
+        <div class="monitor-controls">
+          <button type="button" id="solo" aria-pressed="false" disabled>独听主轨</button>
+          <div class="balance">
+            <label for="other-level">另一轨音量</label>
+            <input type="range" id="other-level" min="0" max="100" step="1" value="20"
+              aria-valuetext="20%" disabled>
+            <output id="other-value" for="other-level">20%</output>
+          </div>
+        </div>
+        <p class="monitor-hint">点选任一分离轨作为主轨。试听分离结果时，可以降低另一轨的音量。</p>
+      </div>
+    </section>
+
+    <div class="feedback">
+      <p id="status" role="status" aria-live="polite">正在读取实验清单…</p>
+      <button type="button" id="retry" hidden>重新载入</button>
+    </div>
+  </main>
+</body>
+</html>
