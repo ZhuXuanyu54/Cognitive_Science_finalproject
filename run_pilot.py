@@ -10,7 +10,14 @@ from evaluate import evaluate
 
 SAMPLE_RATE = 8000
 
-def read_mono(path):
+def resample_audio(signal, input_rate, output_rate):
+    if input_rate == output_rate:
+        return signal
+    factor = gcd(input_rate, output_rate)
+    return resample_poly(signal, output_rate // factor, input_rate // factor, axis=-1)
+
+
+def read_mono(path, sample_rate=SAMPLE_RATE):
     rate, x = wavfile.read(path)
     if x.ndim != 1 or not x.size:
         raise ValueError("Input must be a nonempty mono WAV")
@@ -22,9 +29,7 @@ def read_mono(path):
         x = x.astype(np.float64)
     if not np.isfinite(x).all():
         raise ValueError(f"Non-finite audio samples: {path}")
-    if rate != SAMPLE_RATE:
-        factor = gcd(rate, SAMPLE_RATE)
-        x = resample_poly(x, SAMPLE_RATE // factor, rate // factor)
+    x = resample_audio(x, rate, sample_rate)
     x -= x.mean()
     if np.max(np.abs(x)) < 1e-6:
         raise ValueError("Input is silent")
@@ -42,17 +47,28 @@ def load_separator(weights=None):
     return model.eval()
 
 
-def separate_pcm(model, mix_pcm):
+def infer_waveforms(model, mixture, device="cpu", *, num_speakers=2):
     import torch
 
-    mixture = torch.from_numpy(mix_pcm.astype(np.float32) / 32768)[None, None]
+    tensor = torch.as_tensor(mixture, dtype=torch.float32, device=device)[None, None]
     with torch.inference_mode():
-        estimates = model(mixture)[0].numpy()
-    if estimates.shape != (2, mix_pcm.size) or not np.isfinite(estimates).all():
-        raise RuntimeError("Separator must return two finite tracks matching the input length")
+        estimates = model(tensor)[0].float().cpu().numpy()
+    if estimates.shape != (num_speakers, mixture.size) or not np.isfinite(estimates).all():
+        raise RuntimeError(
+            f"Separator must return {num_speakers} finite tracks matching the input length"
+        )
+    return estimates
+
+
+def tracks_to_pcm(estimates):
     peak = float(np.max(np.abs(estimates)))
     gain = min(1.0, 0.9 / peak) if peak > 0 else 1.0
     return np.rint(estimates * (gain * 32768)).astype(np.int16)
+
+
+def separate_pcm(model, mix_pcm):
+    estimates = infer_waveforms(model, mix_pcm.astype(np.float32) / 32768)
+    return tracks_to_pcm(estimates)
 
 def mix(first, second, offset_s):
     offset = round(offset_s * SAMPLE_RATE)

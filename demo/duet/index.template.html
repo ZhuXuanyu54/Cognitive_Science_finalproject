@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DUET｜双观测语音分离演示</title>
+<style>
+:root {
+  color-scheme: light;
+  --ink:#271e23; --muted:#55474e; --paper:#fcf9f8; --white:#fff;
+  --red:#872436; --red-deep:#641a2a; --line:#dfcdd2; --pale:#f3e7ea;
+  --mono:"IBM Plex Mono","Menlo",monospace;
+  --sans:"Source Sans 3","PingFang SC","Microsoft YaHei",sans-serif;
+  --serif:"Source Serif 4","Songti SC","SimSun",serif;
+  --s1:.35rem; --s2:.7rem; --s3:1.1rem; --s4:1.65rem; --s5:2.5rem; --s6:3.5rem;
+  --radius:5px;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font: 1rem/1.6 var(--sans); }
+main { width:min(1160px,calc(100% - 2.5rem)); margin:0 auto; padding:var(--s5) 0 var(--s6); }
+header { margin-bottom:var(--s4); }
+h1,h2,p,figure,dl,dd { margin:0; }
+h1 { color:var(--red-deep); font:700 clamp(2rem,5vw,3.5rem)/1.12 var(--serif); letter-spacing:-.025em; }
+h2 { font:700 1.45rem/1.3 var(--serif); }
+.lead { color:var(--muted); margin-top:var(--s2); max-width:58rem; }
+.stage-select { display:grid; grid-template-columns:repeat(3, 1fr); gap:var(--s2); border-bottom:1px solid var(--line); padding-bottom:var(--s3); }
+button { font:inherit; line-height:1.3; cursor:pointer; appearance:none; min-height:44px; color:var(--red-deep);
+  background:var(--white); border:1px solid var(--line); border-radius:var(--radius); padding:.63rem .8rem; }
+button:hover:not(:disabled) { border-color:var(--red); background:var(--pale); }
+button[aria-pressed=true] { border-color:var(--red); background:var(--red); color:var(--white); font-weight:700; }
+button[aria-pressed=true]:hover { background:var(--red-deep); color:var(--white); }
+button:focus-visible, a:focus-visible, audio:focus-visible, summary:focus-visible { outline:3px solid var(--red); outline-offset:3px; }
+button:disabled { cursor:default; color:#75666d; border-color:#eadfe2; background:#f2eeef; }
+.working { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(300px,1fr); gap:var(--s5); padding-top:var(--s4); align-items:start; }
+.plot { background:var(--white); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+.plot img { display:block; width:100%; height:auto; aspect-ratio:108/67; object-fit:contain; }
+figcaption { margin:var(--s2) 0 0; color:var(--muted); line-height:1.45; }
+.detail { display:grid; gap:var(--s3); border-bottom:1px solid var(--line); padding-bottom:var(--s3); }
+.detail p { color:var(--muted); line-height:1.52; }
+.facts { display:grid; grid-template-columns:1fr 1fr; gap:var(--s1) var(--s3); }
+.facts dt { color:var(--muted); font-size:.92rem; }
+.facts dd { font: 1em/1.45 var(--mono); font-feature-settings:"tnum"; }
+.score { display:flex; gap:.55rem; align-items:baseline; font-weight:700; }
+.score span:first-child { color:var(--red); font:700 clamp(1.3rem,3vw,2rem)/1.25 var(--mono); }
+.score span:last-child { color:var(--muted); }
+.playback { padding-top:var(--s3); display:grid; gap:var(--s2); }
+.track-keys { display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--s1); }
+.track-keys button { padding:.6rem .32rem; }
+audio { width:100%; }
+#playing { color:var(--muted); line-height:1.35; }
+details { border-top:1px solid var(--line); padding-top:var(--s3); margin-top:var(--s5); color:var(--muted); }
+summary { width:max-content; cursor:pointer; color:var(--red-deep); font-weight:700; }
+details p { max-width:68rem; margin-top:var(--s2); }
+a { color:var(--red); text-decoration-thickness:1px; text-underline-offset:3px; }
+@media(max-width:760px) {
+  main { width:calc(100% - 1.65rem); padding-top:var(--s4); }
+  .working { grid-template-columns:1fr; gap:var(--s4); }
+  .stage-select button { padding-inline:.3rem; }
+}
+@media(max-width:400px) { .stage-select button { font-size:.93rem; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>DUET 双观测语音分离</h1>
+  <p class="lead">同一对真人语音、同一条麦克风 1 混音。切换三档条件，观察两路观测间的局部幅度和时延估计怎样聚成峰，再试听分离结果。</p>
+</header>
+<div class="stage-select" role="group" aria-label="演示难度" id="stages">
+  <button type="button" data-case="0">易&nbsp;·&nbsp;峰值分开</button>
+  <button type="button" data-case="1">中&nbsp;·&nbsp;峰值靠近</button>
+  <button type="button" data-case="2">难&nbsp;·&nbsp;峰值重合</button>
+</div>
+<div class="working">
+  <figure>
+    <div class="plot"><img id="density" alt=""></div>
+    <figcaption>颜色深浅表示本档时频点的相对能量权重，十字标出估计峰。横轴为相对时延，纵轴为相对幅度。</figcaption>
+  </figure>
+  <section aria-label="当前条件和音轨">
+    <div class="detail" aria-live="polite">
+      <h2 id="case-title"></h2>
+      <p id="condition"></p>
+      <dl class="facts">
+        <div><dt>设定相对幅度（dB）</dt><dd id="gain"></dd></div>
+        <div><dt>设定相对时延（采样点）</dt><dd id="delay"></dd></div>
+      </dl>
+      <div class="score"><span id="value"></span><span id="metric"></span></div>
+    </div>
+    <div class="playback">
+      <div class="track-keys" role="group" aria-label="选择要试听的音轨" id="track-keys">
+        <button type="button" data-track="0">原始混音</button>
+        <button type="button" data-track="1">分离轨 1</button>
+        <button type="button" data-track="2">分离轨 2</button>
+      </div>
+      <audio id="audio" controls preload="metadata" aria-label="当前音轨的播放器"></audio>
+      <p id="playing" role="status"></p>
+    </div>
+  </section>
+</div>
+<details>
+  <summary>参数、评分与语料来源</summary>
+  <p>两条观测由同一对干净语音合成，采样率 16 kHz，每段 4.204 秒。第二路对两个声源分别施加固定增益和时移，每 8 ms 用 32 ms Hann 窗计算 STFT。在 125–1400 Hz 范围内，用两路复时频系数之比估计幅度和相位时延，较低频段可避开本演示的相位缠绕。能量加权二维直方图经高斯平滑后选取显著峰，再以两个峰对各时频点的归一化复数残差确定 0/1 掩蔽。掩蔽作用于麦克风 1 的混音，以 iSTFT 恢复波形。</p>
+  <p>报告的平均 SI-SDRi 是两条估计音轨经最佳一一配对后，相对混音的平均 SI-SDR 改善量。干净原声仅用于构造观测和评分。试听波形统一至相同的 RMS 水平。难档的 X₁ 与 X₂ 完全相同，可试听混音，此时缺少可区分两个声源的相对幅度和时延线索。</p>
+  <p>方法参考 <a href="https://doi.org/10.1109/TSP.2004.828896">Yılmaz &amp; Rickard (2004)</a>。普通话真人朗读来自 <a href="https://www.openslr.org/33/">AISHELL-1</a>（Beijing Shell Shell Technology Co., Ltd.，<a href="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</a>）。使用 BAC009S0764W0121、BAC009S0916W0489 两段公开语音，经截齐、去直流、均衡和加权移位构造观测。</p>
+</details>
+<noscript><p>请启用本地 JavaScript 来切换案例和音轨。</p></noscript>
+</main>
+<script type="application/json" id="fixtures">__FIXTURES__</script>
+<script>
+"use strict";
+const fixtures=JSON.parse(document.getElementById("fixtures").textContent);
+const stageButtons=Array.from(document.querySelectorAll("[data-case]"));
+const trackButtons=Array.from(document.querySelectorAll("[data-track]"));
+const captions=["原始混音（麦克风 1）","分离轨 1","分离轨 2"];
+const info=[
+  "幅度和时延都不同，两个声源在参数平面上聚成分开的峰。",
+  "相对幅度相同，仍可用幅度相同条件下的两个不同时延区分声源。",
+  "两个声源的相对幅度和时延完全相同，X₁ 与 X₂ 相同，只形成一个峰。"
+];
+let caseIndex=0;
+let trackIndex=0;
+const player=document.getElementById("audio");
+const text=(id,value)=>{document.getElementById(id).textContent=value;};
+const signed=(value,digits)=>{const v=Number(value); return v>0?"+"+v.toFixed(digits):v.toFixed(digits).replace("-","−");};
+
+function switchTrack(index,keepTime) {
+  const data=fixtures.cases[caseIndex];
+  const uri=index===0?fixtures.mixture:data.tracks[index-1];
+  if (!uri) return;
+  const time=keepTime && player.currentTime<player.duration?player.currentTime:0;
+  const wasPlaying=keepTime && !player.paused;
+  player.onloadedmetadata=()=>{ if(time>0) player.currentTime=Math.min(time,player.duration); };
+  player.src=uri;
+  if(wasPlaying) player.play().catch(()=>{});
+  trackIndex=index;
+  trackButtons.forEach((button,i)=>button.setAttribute("aria-pressed",String(i===index)));
+  player.setAttribute("aria-label","试听"+captions[index]);
+  text("playing","已选音轨："+captions[index]);
+}
+
+function selectStage(index) {
+  caseIndex=index;
+  const data=fixtures.cases[index];
+  const image=document.getElementById("density");
+  image.src=data.image;
+  image.alt=data.title+"的时延与相对幅度分布，检测到"+data.peaks.length+"个峰";
+  stageButtons.forEach((button,i)=>button.setAttribute("aria-pressed",String(index===i)));
+  text("case-title",data.title);
+  text("condition",info[index]);
+  text("gain",data.attenuation_db.map(v=>signed(v,2)).join(" / "));
+  text("delay",data.delays.map(v=>signed(v,0)).join(" / "));
+  text("value",data.mean_si_sdri==null?"1 个峰":signed(data.mean_si_sdri,2)+" dB");
+  text("metric",data.mean_si_sdri==null?"只有混音可试听":"平均 SI-SDRi");
+  trackButtons.slice(1).forEach(button=>{button.disabled=data.tracks.length===0;});
+  switchTrack(0,false);
+}
+
+stageButtons.forEach(button=>button.addEventListener("click",()=>selectStage(Number(button.dataset.case))));
+trackButtons.forEach(button=>button.addEventListener("click",()=>{
+  const index=Number(button.dataset.track);
+  if(index!==trackIndex) switchTrack(index,true);
+}));
+player.addEventListener("error",()=>text("playing","此浏览器加载音频失败，请用 Chrome、Edge 或 Safari 打开本文件。"));
+selectStage(0);
+</script>
+</body>
+</html>

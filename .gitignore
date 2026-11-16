@@ -1,4 +1,7 @@
 .model-cache/
+checkpoints/
+vendor/**/build/
+vendor/**/*.egg-info/
 __pycache__/
 .venv/
 .runtime-path

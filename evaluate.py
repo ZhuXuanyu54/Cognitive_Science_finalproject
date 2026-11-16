@@ -20,7 +20,12 @@ def sisdr(reference, estimate):
 
 def evaluate(mixture, references, estimates):
     """Evaluate aligned mono arrays with shapes (T,), (K,T), (K,T)."""
+    mixture = np.asarray(mixture)
     references, estimates = np.asarray(references), np.asarray(estimates)
+    if (mixture.ndim != 1 or not mixture.size or references.ndim != 2
+            or references.shape != estimates.shape or not references.shape[0]
+            or references.shape[1] != mixture.size):
+        raise ValueError("Scoring needs an equal number of aligned references and estimates")
     scores = np.array([[sisdr(ref, est) for est in estimates] for ref in references])
     order = max(permutations(range(len(references))), key=lambda p: sum(scores[i, j] for i, j in enumerate(p)))
     per_source = []

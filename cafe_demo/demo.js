@@ -12,14 +12,16 @@ const soloButton = byId("solo");
 const otherLevel = byId("other-level");
 const otherValue = byId("other-value");
 const trackArea = byId("track-area");
-const lanes = [...document.querySelectorAll(".lane")];
-const canvases = [...document.querySelectorAll(".waveform")];
-const trackButtons = [...document.querySelectorAll(".track-button")];
+const mixLane = byId("mix-lane");
+const cursorArea = trackArea.querySelector(".cursor-area");
+const laneTemplate = byId("track-lane");
+const embeddedManifest = byId("embedded-manifest");
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 const OfflineAudioContextClass = window.OfflineAudioContext || window.webkitOfflineAudioContext;
 const seekStep = Number(seek.step);
 
 let manifestUrl;
+let modelName;
 let cases = [];
 let currentCase = null;
 let request;
@@ -40,6 +42,9 @@ let activeScrub = null;
 let mode = "mix";
 let focus = 0;
 let solo = false;
+let lanes = [mixLane];
+let canvases = [mixLane.querySelector(".waveform")];
+let trackButtons = [];
 
 function setStatus(message, error = false) {
   status.textContent = message;
@@ -80,11 +85,25 @@ function describeCase(item) {
   }
 
   const sweepLabels = { level: "干扰电平", overlap: "语音重叠", recording: "录音试听" };
+  const score = item.scores?.mean_sisdri;
+  const relativeLevels = item.source_levels_db;
+  const sourceScores = item.evaluation?.per_source;
+  const threeSourceScores = Array.isArray(sourceScores) && sourceScores.length === 3 &&
+    sourceScores.every((source) => Number.isFinite(source?.sisdri));
+  const db = (value) => `${value > 0 ? "+" : ""}${value.toFixed(2)} dB`;
   const fields = [
     ["语料", item.pair_label],
+    ["模型", item.model || modelName],
+    ["分离轨", Array.isArray(item.files?.tracks) ? `${item.files.tracks.length} 条` : null],
     ["设置", sweepLabels[item.sweep]],
     ["干扰声相对电平", Number.isFinite(item.interferer_db) ? `${item.interferer_db} dB` : null],
-    ["设定重叠时长", Number.isFinite(item.overlap_seconds) ? `${item.overlap_seconds.toFixed(1)} 秒` : null],
+    ["各声源设定相对电平", Array.isArray(relativeLevels) && relativeLevels.length === 3 &&
+        relativeLevels.every(Number.isFinite)
+      ? `${relativeLevels.join(" / ")} dB` : null],
+    ["重叠段时长", Number.isFinite(item.overlap_seconds) ? `${item.overlap_seconds.toFixed(2)} 秒` : null],
+    ["平均 SI-SDR 改善", Number.isFinite(score) ? db(score) : null],
+    ["分离轨 1 / 2 / 3 的 SI-SDR 改善", threeSourceScores
+      ? sourceScores.map((source) => db(source.sisdri)).join(" / ") : null],
   ];
   for (const [name, value] of fields) {
     if (value == null || value === "") continue;
@@ -110,7 +129,7 @@ async function loadManifest() {
   describeCase(null);
   setStatus("正在读取实验清单…");
 
-  if (location.protocol === "file:") {
+  if (location.protocol === "file:" && !embeddedManifest) {
     setStatus("请在项目目录运行 python -m http.server 8080 --bind 127.0.0.1，再打开 http://127.0.0.1:8080/cafe_demo/。", true);
     return;
   }
@@ -120,29 +139,57 @@ async function loadManifest() {
   }
 
   try {
-    const requested = new URL(location.href).searchParams.get("manifest");
-    const url = new URL(requested || "../runs/cafe-demo/manifest.json", location.href);
-    const response = await checkedFetch(url);
-    const manifest = await response.json();
+    let manifest;
+    if (embeddedManifest) {
+      manifest = JSON.parse(embeddedManifest.textContent);
+    } else {
+      const requested = new URL(location.href).searchParams.get("manifest");
+      const url = new URL(requested || "../runs/cafe-demo/manifest.json", location.href);
+      const response = await checkedFetch(url);
+      manifest = await response.json();
+      manifestUrl = new URL(response.url || url);
+    }
     if (!Array.isArray(manifest.cases) || manifest.cases.length === 0 ||
         manifest.cases.some((item) => !item || typeof item.id !== "string" || !item.id)) {
       throw new Error("The manifest has no valid cases");
     }
-    manifestUrl = new URL(response.url || url);
+    modelName = typeof manifest.model === "string" ? manifest.model.split("/").at(-1) : null;
     cases = manifest.cases;
     setCaseOptions();
     picker.disabled = false;
     await loadCase(getCaseFromUrl());
   } catch (error) {
     console.error("Could not load café manifest", error);
-    setStatus("实验清单无法读取。请先生成实验音频，或检查地址中的 manifest 路径。", true);
+    setStatus(embeddedManifest
+      ? "演示数据无法读取。请重新打开完整的 HTML 文件。"
+      : "实验清单无法读取。请先生成实验音频，或检查地址中的 manifest 路径。", true);
   }
+}
+
+function setTrackCount(count) {
+  if (count === trackButtons.length) return;
+  lanes.slice(1).forEach((lane) => lane.remove());
+  const tracks = Array.from({ length: count }, (_, index) => {
+    const lane = laneTemplate.content.firstElementChild.cloneNode(true);
+    const button = lane.querySelector(".track-button");
+    button.dataset.track = String(index);
+    button.querySelector(".lane-name").textContent = `分离轨 ${index + 1}`;
+    trackArea.insertBefore(lane, cursorArea);
+    return { lane, button };
+  });
+  lanes = [mixLane, ...tracks.map((track) => track.lane)];
+  canvases = lanes.map((lane) => lane.querySelector(".waveform"));
+  trackButtons = tracks.map((track) => track.button);
+  byId("other-label").textContent = count === 2 ? "另一轨音量" : "其他音轨音量";
+  byId("monitor-hint").textContent = count === 2
+    ? "点选任一分离轨作为主轨，再调节另一轨的音量。"
+    : "点选任一分离轨作为主轨。音量滑块同时调节其余两轨。";
 }
 
 function updateControls() {
   const ready = buffers.length > 0;
   playButton.disabled = !ready || loadingPlayback;
-  playButton.textContent = playback ? "暂停" : "播放";
+  playButton.textContent = playback ? "暂停" : ready && position >= duration ? "重播" : "播放";
   stopButton.disabled = !ready || (!loadingPlayback && !playback && position === 0);
   byId("modes").disabled = !ready;
   seek.disabled = !ready;
@@ -175,8 +222,8 @@ function setMonitoring(nextMode, nextFocus = focus, nextSolo = solo) {
     const isFocus = index === focus;
     button.setAttribute("aria-pressed", String(isFocus));
     lanes[index + 1].dataset.active = String(mode === "separated" && isFocus);
-    byId(`track-${index + 1}-status`).textContent =
-      isFocus ? "主轨" : mode === "separated" && solo ? "静音" : "";
+    button.querySelector(".lane-status").textContent =
+      isFocus ? "主轨" : mode === "separated" && (solo || Number(otherLevel.value) === 0) ? "静音" : "";
   }
   updateControls();
   if (playback) {
@@ -209,12 +256,14 @@ async function loadCase(item) {
   try {
     const { mixture, tracks } = item.files || {};
     if (typeof mixture !== "string" || !mixture || !Array.isArray(tracks) ||
-        tracks.length !== 2 || tracks.some((file) => typeof file !== "string" || !file)) {
-      throw new Error("The case must list a mix and two separated tracks");
+        ![2, 3].includes(tracks.length) || tracks.some((file) => typeof file !== "string" || !file)) {
+      throw new Error("The case must list a mix and two or three separated tracks");
     }
+    setTrackCount(tracks.length);
+    setMonitoring("mix", 0, false);
     decodingContext ??= new OfflineAudioContextClass(1, 1, 48000);
     const decoded = await Promise.all([mixture, ...tracks].map(async (file) => {
-      const response = await checkedFetch(new URL(file, manifestUrl), signal);
+      const response = await checkedFetch(embeddedManifest ? file : new URL(file, manifestUrl), signal);
       const bytes = await response.arrayBuffer();
       if (signal.aborted) throw new DOMException("Loading aborted", "AbortError");
       return decodingContext.decodeAudioData(bytes);
@@ -229,8 +278,9 @@ async function loadCase(item) {
       }
       return peak;
     });
-    // Keep the same attenuation when comparing the mixture with both separated tracks.
-    headroom = Math.min(1, 0.92 / Math.max(peaks[0], peaks[1] + peaks[2]));
+    // Use shared headroom so switching between the mix and the estimates preserves gain.
+    const combinedPeak = peaks.slice(1).reduce((sum, peak) => sum + peak, 0);
+    headroom = Math.min(1, 0.92 / Math.max(peaks[0], combinedPeak));
     waveformScale = Math.max(0.01, ...peaks);
     seek.max = String(Math.ceil(duration / seekStep) * seekStep);
     updateTime(0);
@@ -245,12 +295,12 @@ async function loadCase(item) {
 }
 
 function monitorGains() {
-  const result = mode === "mix" ? [1, 0, 0] : [0, 0, 0];
-  if (mode === "separated") {
-    result[focus + 1] = 1;
-    result[2 - focus] = solo ? 0 : Number(otherLevel.value) / 100;
-  }
-  return result.map((gain) => gain * headroom);
+  const background = solo ? 0 : Number(otherLevel.value) / 100;
+  return buffers.map((_, index) => {
+    if (mode === "mix") return index === 0 ? headroom : 0;
+    if (index === 0) return 0;
+    return (index === focus + 1 ? 1 : background) * headroom;
+  });
 }
 
 function currentPosition() {
@@ -427,9 +477,11 @@ function scheduleWaveforms() {
 picker.addEventListener("change", () => {
   const item = cases.find((entry) => entry.id === picker.value);
   if (!item) return;
-  const url = new URL(location.href);
-  url.searchParams.set("case", item.id);
-  history.replaceState(null, "", url);
+  if (location.protocol !== "file:") {
+    const url = new URL(location.href);
+    url.searchParams.set("case", item.id);
+    history.replaceState(null, "", url);
+  }
   loadCase(item);
 });
 
@@ -448,9 +500,6 @@ stopButton.addEventListener("click", () => {
 });
 
 byId("modes").addEventListener("change", (event) => setMonitoring(event.target.value));
-for (const button of trackButtons) {
-  button.addEventListener("click", () => setMonitoring("separated", Number(button.dataset.track)));
-}
 soloButton.addEventListener("click", () => setMonitoring("separated", focus, !solo));
 otherLevel.addEventListener("input", () => {
   const percentage = `${otherLevel.value}%`;
@@ -483,17 +532,22 @@ function finishScrub(event) {
 window.addEventListener("pointerup", finishScrub);
 window.addEventListener("pointercancel", finishScrub);
 
-for (const canvas of canvases) {
-  canvas.addEventListener("click", (event) => {
-    const { left, width } = canvas.getBoundingClientRect();
-    jumpTo((event.clientX - left) / width * duration);
-  });
-}
+trackArea.addEventListener("click", (event) => {
+  const button = event.target.closest(".track-button");
+  if (button && !button.disabled) {
+    setMonitoring("separated", Number(button.dataset.track));
+  } else if (event.target.matches(".waveform")) {
+    const { left, width } = event.target.getBoundingClientRect();
+    if (width) jumpTo((event.clientX - left) / width * duration);
+  }
+});
 retry.addEventListener("click", () => currentCase ? loadCase(currentCase) : loadManifest());
 if (window.ResizeObserver) {
   new ResizeObserver(scheduleWaveforms).observe(trackArea);
 } else {
   window.addEventListener("resize", scheduleWaveforms);
 }
+setTrackCount(2);
+setMonitoring("mix");
 scheduleWaveforms();
 loadManifest();

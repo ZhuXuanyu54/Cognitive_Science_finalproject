@@ -1,4 +1,8 @@
-numpy>=1.26,<3
+numpy>=1.26,<2
 scipy>=1.11,<2
 torch==2.8.0
 torchaudio==2.8.0
+torchvision==0.23.0
+clearvoice==0.1.2
+rotary-embedding-torch==0.8.3
+./vendor/sr_corrnet_ss[hub]
